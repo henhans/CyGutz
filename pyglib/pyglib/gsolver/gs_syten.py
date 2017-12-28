@@ -21,7 +21,7 @@ def write_text_4d(fname, head, dm):
             for j, dm2 in enumerate(dm1):
                 for k, dm3 in enumerate(dm2):
                     for l, dm4 in enumerate(dm3):
-                        if abs(dm4) > 1.e-12:
+#                        if abs(dm4) > 1.e-12:
                             f.write('{:3d}{:3d}{:3d}{:3d}{:24.16f}{:24.16f}\n' \
                                     .format(i, j, k, l, dm4.real, dm4.imag))
 
@@ -59,28 +59,31 @@ def h5gen_text_embed_hamil(imp):
             '              v2e.imag\n'
     if not os.path.isfile('v2e_{}.dat'.format(imp)):
         write_text_4d('v2e_{}.dat'.format(imp), head, v2e)
+#    write_text_4d('v2e_{}.dat'.format(imp), head, v2e)
 
 
-def gen_file_lat(imp, flat, reorder=None):
+def gen_file_lat(imp, flat, norbs, reorder=None, threads_super=1):
     '''Generate lat file.
     '''
     command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
-            'syten-mps-embedding-lanata', '--h1e', './h1e_{}.dat'.format(imp),
-            '--d', './d_aalpha_{}.dat'.format(imp), '--lambdac',
+#    command = ['/usr/bin/time', '-v', '-o', 'timing_{}'.format(imp),
+            'syten-mps-embedding-lanata', '-l', str(norbs), '--h1e',
+	    './h1e_{}.dat'.format(imp), '--d', './d_aalpha_{}.dat'.format(imp), '--lambdac',
             './lambdac_{}.dat'.format(imp), '--v2e', './v2e_{}.dat'.format(imp),
-            '-o', flat, '-q']
+            '-o', flat,'--threads-super',str(threads_super), '-q']
     if reorder is not None:
         command.extend(['-r', reorder])
     print(' '.join(command))
     subprocess.call(command)
 
 
-def gen_file_rnd_state(imp, norbs, lat):
+def gen_file_rnd_state(imp, norbs, lat, threads_tensor=1):
     '''Generate random state for initialization.
     '''
     command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
+#    command = ['/usr/bin/time', '-v', '-o', 'timing_{}'.format(imp),
             'syten-random', '-s', str(norbs), '-l', lat, '-o',
-            'rnd_{}.state'.format(imp)]
+            'rnd_{}.state'.format(imp), '--threads-tensor', str(threads_tensor), '-q']
     print(' '.join(command))
     subprocess.call(command)
 
@@ -90,27 +93,48 @@ def run_syten_dmrg(imp, lat, inp_state, out_f, s_config, out_state=None,
     '''Run dmrg calculation.
     '''
     command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
+#    command = ['/usr/bin/time', '-v', '-o', 'timing_{}'.format(imp),
             'syten-dmrg', '-l', lat, '-i', inp_state, '-o', out_f,
-            '-s', s_config, '-q']
+            '-s', s_config, '--threads-tensor', str(threads_tensor), '-q']
     if out_state is not None:
         command.extend(['-f', out_state])
-    if threads_tensor > 1:
-        command.extend(['--threads-tensor', str(threads_tensor)])
+#    if threads_tensor > 1:
+#        command.extend(['--threads-tensor', str(threads_tensor)])
     print(' '.join(command))
     subprocess.call(command)
 
+def run_syten_dmrg_tunnel(imp, lat, inp_state, out_f, s_config, out_state=None,
+        threads_tensor=1):
+    '''Run dmrg calculation with tunneling term to prevent stucking in local minimum.
+    '''
+    command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
+#    command = ['/usr/bin/time', '-v', '-o', 'timing_{}'.format(imp),
+            'syten-dmrg', '-l', lat, '-l', 'with-reordering_{}.lat:Htunnel'.format(imp), '-i', inp_state, '-o', out_f,
+            '-s', s_config, '--threads-tensor', str(threads_tensor)]#, '-q']
+    if out_state is not None:
+        command.extend(['-f', out_state])
+#    if threads_tensor > 1:
+#        command.extend(['--threads-tensor', str(threads_tensor)])
+    print(' '.join(command))
+#    subprocess.call(command)
+    log = open('syten-dmrg.log','w')
+    subprocess.call(command, stdout=log, stderr=log)
 
-def run_syten_expectation(imp, lat, state, f_expval):
+def run_syten_expectation(imp, lat, state, f_expval, threads_tensor=1):
     '''Calculate expectation values.
     '''
-    command = ['syten-expectation', '-c', '-a', state, '-l', lat, \
-            '--template-file', f_expval, '-q']
+    command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
+            'syten-expectation', '-c', '-a', state, '-l', lat, \
+#    command = ['syten-expectation', '-c', state, '-l', lat, \
+            '--template-file', f_expval, '--threads-tensor', str(threads_tensor), '-q']
     return subprocess.check_output(command)
 
 
-def run_syten_mutual_information(imp, state, f_reorder):
+def run_syten_mutual_information(imp, state, f_reorder, threads_tensor=1):
     command = ['/usr/bin/time', '-v', '-a', '-o', 'timing_{}'.format(imp),
-            'syten-mutualInformation', '-o', state, '-f', f_reorder]
+#    command = ['/usr/bin/time', '-v', '-o', 'timing_{}'.format(imp),
+            'syten-mutualInformation', '-o', state, '-f', f_reorder,
+            '--threads-tensor', str(threads_tensor), '-q']
     print(' '.join(command))
     subprocess.call(command)
 
@@ -130,6 +154,18 @@ def driver_dmrg(s_config= \
         for line in open('s_config_{}.cfg'.format(imp), 'r').readlines():
             s_config += line.replace('\n', '')
 
+    if os.path.isfile('timing_{}'.format(imp)):
+        os.remove('timing_{}'.format(imp))
+
+    if os.path.isfile('s_threads_tensor.in'):
+        threads_tensor = numpy.loadtxt('s_threads_tensor.in',dtype=int)
+    else:
+        threads_tensor =  1
+    if os.path.isfile('s_threads_super.in'):
+        threads_super = numpy.loadtxt('s_threads_super.in',dtype=int)
+    else:
+        threads_super = 1
+
     with h5py.File('EMBED_HAMIL_{}.h5'.format(imp), 'r') as f:
         na2 = f['/na2'][0]
         lambdac = f['/LAMBDA'][...].T
@@ -141,21 +177,21 @@ def driver_dmrg(s_config= \
     if not os.path.isfile(f_reorder):
         # generate lat file
         flat = 'without-reordering_{}.lat'.format(imp)
-        gen_file_lat(imp, flat)
+        gen_file_lat(imp, flat, na2, threads_super=threads_super)
 
         # generate random state for initialization.
-        gen_file_rnd_state(imp, na2, flat)
+        gen_file_rnd_state(imp, na2, flat, threads_tensor=threads_tensor)
 
         # initial stage 1/2 sweeping
         flat = 'without-reordering_{}.lat:H1e Hd Hf Hv2e + + +'.format(imp)
         inp_state = 'rnd_{}.state'.format(imp)
         out_f = 'without-reordering-dmrg_{}'.format(imp)
         s_config0 = '(t 1e-8 d 1e-6 m 50 x 5) (m 100)'
-        run_syten_dmrg(imp, flat, inp_state, out_f, s_config0)
+        run_syten_dmrg(imp, flat, inp_state, out_f, s_config0, threads_tensor=threads_tensor)
 
         # reorder
         state = out_f + '_2_5.state'
-        run_syten_mutual_information(imp, state, f_reorder)
+        run_syten_mutual_information(imp, state, f_reorder, threads_tensor=threads_tensor)
     else:
         if os.path.isfile('with-reordering-gs_{}.state'.format(imp)):
             inp_state = 'with-reordering-gs_{}.state'.format(imp)
@@ -164,14 +200,14 @@ def driver_dmrg(s_config= \
 
     # generate lat file with reordering
     flat = 'with-reordering_{}.lat'.format(imp)
-    gen_file_lat(imp, flat, reorder=f_reorder)
+    gen_file_lat(imp, flat, na2, reorder=f_reorder, threads_super=threads_super)
 
     # dmrg after reordering
     flat = 'with-reordering_{}.lat:H1e Hd Hf Hv2e + + +'.format(imp)
     out_f = 'with-reordering-dmrg_{}'.format(imp)
     out_state = 'with-reordering-gs_{}.state'.format(imp)
-    run_syten_dmrg(imp, flat, inp_state, out_f, s_config,
-            out_state=out_state)
+    run_syten_dmrg_tunnel(imp, flat, inp_state, out_f, s_config,
+            out_state=out_state, threads_tensor=threads_tensor)
 
     # get expectation value
     f_temp = 'exp_val_{}.template'.format(imp)
@@ -183,7 +219,7 @@ def driver_dmrg(s_config= \
                     f.write('{{ CH_{} C_{} * }}\n'.format(i, j))
             f.write('{ H1e Hd Hf Hv2e + + + }')
     flat = 'with-reordering_{}.lat'.format(imp)
-    res = run_syten_expectation(imp, flat, out_state, f_temp)
+    res = run_syten_expectation(imp, flat, out_state, f_temp, threads_tensor=threads_tensor)
     res = res.split('\n')[:na4*(na4+1)/2+1]
     dm = numpy.zeros([na4, na4], dtype=numpy.complex)
     ij = 0
